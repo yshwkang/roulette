@@ -1,6 +1,6 @@
 # PRD: 의사결정 룰렛
 
-> 기준 코드: [roulette.html](roulette.html) (단일 파일, 약 155줄, 외부 의존성 없음)
+> 기준 코드: [index.html](index.html) (단일 파일, 약 155줄, 외부 의존성 없음)
 
 ## 1. 개요
 
@@ -83,5 +83,5 @@
 
 ```
 roulette/
-└── roulette.html   # 마크업·스타일·스크립트 일체형
+└── index.html   # 마크업·스타일·스크립트 일체형
 ```
