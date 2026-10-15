@@ -111,6 +111,7 @@
       <input type="text" id="preset-name" maxlength="20" placeholder="새 프리셋 이름" aria-label="새 프리셋 이름">
       <button id="btn-preset-add">새 프리셋 추가</button>
       <button id="btn-preset-delete" class="btn-del">선택 프리셋 삭제</button>
+      <button id="btn-preset-reset">기본값 복원</button>
       <p id="preset-msg" class="hint" role="status" aria-live="polite"></p>
     </div>
   </dialog>
@@ -149,6 +150,7 @@
     const btnPresetAdd = document.getElementById('btn-preset-add');
     const btnPresetDelete = document.getElementById('btn-preset-delete');
     const presetNameInput = document.getElementById('preset-name');
+    const btnPresetReset = document.getElementById('btn-preset-reset');
     const presetMsg = document.getElementById('preset-msg');
 
     const MIN_ITEMS = 2;
@@ -171,8 +173,10 @@
       ]
     };
 
-    // ---- 사용자 프리셋 (localStorage 저장) ----
-    const STORAGE_KEY = 'roulette.customPresets';
+    // ---- 프리셋 데이터 (localStorage 저장) ----
+    // 저장 내용: 사용자 프리셋(custom), 기본 프리셋 수정본(overrides), 마지막 선택(selected)
+    const STORAGE_KEY = 'roulette.state.v1';
+    const LEGACY_KEY = 'roulette.customPresets'; // 이전 버전: 사용자 프리셋만 저장
     const MAX_CUSTOM_PRESETS = 20;
 
     function sanitizeItems(items) {
@@ -185,43 +189,67 @@
       return clean.length >= MIN_ITEMS ? clean : null;
     }
 
-    function loadCustomPresets() {
+    function sanitizeCustom(saved) {
       const result = {};
-      try {
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-        Object.keys(saved).forEach(key => {
-          const items = sanitizeItems(saved[key] && saved[key].items);
-          if (items && saved[key].label) result[key] = { label: String(saved[key].label).slice(0, 20), items };
-        });
-      } catch (e) { /* 저장소를 쓸 수 없으면 이번 세션에서만 유지 */ }
+      Object.keys(saved || {}).forEach(key => {
+        const items = sanitizeItems(saved[key] && saved[key].items);
+        if (items && saved[key].label) result[key] = { label: String(saved[key].label).slice(0, 20), items };
+      });
       return result;
     }
 
-    function saveCustomPresets() {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(customPresets)); } catch (e) { /* 무시 */ }
+    function loadState() {
+      const state = { custom: {}, overrides: {}, selected: 'lunch' };
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw);
+          state.custom = sanitizeCustom(saved.custom);
+          Object.keys(presets).forEach(key => {
+            const items = sanitizeItems(saved.overrides && saved.overrides[key]);
+            if (items) state.overrides[key] = items;
+          });
+          if (typeof saved.selected === 'string') state.selected = saved.selected;
+        } else {
+          const legacy = localStorage.getItem(LEGACY_KEY);
+          if (legacy) state.custom = sanitizeCustom(JSON.parse(legacy));
+        }
+      } catch (e) { /* 저장소를 쓸 수 없거나 손상되면 기본값 사용 */ }
+      if (!(state.selected in presets) && !(state.selected in state.custom)) state.selected = 'lunch';
+      return state;
     }
 
-    const customPresets = loadCustomPresets();
+    const state = loadState();
+    const customPresets = state.custom;
+    const presetOverrides = state.overrides;
+
+    function savePresets() {
+      state.selected = currentKey;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* 무시: 이번 세션에서만 유지 */ }
+    }
+    const saveCustomPresets = savePresets;
+
     const isCustom = key => Object.prototype.hasOwnProperty.call(customPresets, key);
 
     // 프리셋 원본이 편집으로 바뀌지 않도록 복사본 사용
     function clonePreset(key) {
-      const source = isCustom(key) ? customPresets[key].items : presets[key];
+      const source = isCustom(key) ? customPresets[key].items : (presetOverrides[key] || presets[key]);
       return source.map(item => ({ ...item }));
     }
 
-    let currentKey = 'lunch';
+    let currentKey = state.selected;
     let currentItems = clonePreset(currentKey);
     let currentRotation = 0;
     let isSpinning = false;
 
-    // 항목이 바뀌면 다시 그리고, 사용자 프리셋이면 변경 내용을 저장
+    // 항목이 바뀌면 다시 그리고 변경 내용을 저장 (기본 프리셋은 수정본으로 저장)
     function onItemsChanged() {
       draw(currentRotation);
-      if (isCustom(currentKey)) {
-        customPresets[currentKey].items = currentItems.map(item => ({ ...item }));
-        saveCustomPresets();
-      }
+      const copy = currentItems.map(item => ({ ...item }));
+      if (isCustom(currentKey)) customPresets[currentKey].items = copy;
+      else presetOverrides[currentKey] = copy;
+      savePresets();
+      updatePresetUI();
     }
 
     function rebuildPresetOptions() {
@@ -238,6 +266,7 @@
 
     function updatePresetUI() {
       btnPresetDelete.disabled = isSpinning || !isCustom(currentKey);
+      btnPresetReset.disabled = isSpinning || isCustom(currentKey) || !presetOverrides[currentKey];
       btnPresetAdd.disabled = isSpinning;
       presetNameInput.disabled = isSpinning;
       btnOpenPreset.disabled = isSpinning;
@@ -259,6 +288,7 @@
       presetSelect.value = key;
       renderEditor();
       draw(0);
+      savePresets();
       updatePresetUI();
     }
 
@@ -487,6 +517,13 @@
 
     btnPresetAdd.addEventListener('click', addPreset);
     btnPresetDelete.addEventListener('click', deletePreset);
+    btnPresetReset.addEventListener('click', () => {
+      if (isSpinning || isCustom(currentKey) || !presetOverrides[currentKey]) return;
+      if (!confirm('이 프리셋을 기본값으로 되돌릴까요?')) return;
+      delete presetOverrides[currentKey];
+      selectPreset(currentKey);
+      setPresetMessage('기본값으로 복원했습니다.');
+    });
     presetNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addPreset(); });
 
     // 편집 메뉴 (모달)
