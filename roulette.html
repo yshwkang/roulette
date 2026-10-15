@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>의사결정 룰렛</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 16px; margin: 0; }
+    h2 { margin: 8px 0 12px; text-align: center; }
+    /* 폭뿐 아니라 높이도 고려: 상단 메뉴/선택/돌리기 버튼 영역을 뺀 나머지에 룰렛을 맞춰 스크롤 없이 한 화면에 표시 */
+    .roulette-container { position: relative; margin: 16px 0; width: min(350px, calc(100vw - 32px), calc(100vh - 290px)); min-width: 200px; }
+    @supports (height: 100dvh) {
+      .roulette-container { width: min(350px, calc(100vw - 32px), calc(100dvh - 290px)); min-width: 200px; }
+    }
+    @media (max-width: 600px) {
+      body { padding: 8px 16px; }
+      h2 { margin: 4px 0 8px; font-size: 20px; }
+    }
+    /* 12시 방향 화살표 표시 */
+    .arrow {
+      position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 15px solid transparent; border-right: 15px solid transparent;
+      border-top: 25px solid #E74C3C; z-index: 10;
+    }
+    canvas { display: block; width: 100%; height: auto; border-radius: 50%; box-shadow: 0 4px 10px rgba(0,0,0,0.15); touch-action: manipulation; }
+    .controls { display: flex; gap: 10px; margin-bottom: 12px; }
+    button { padding: 8px 16px; min-height: 44px; cursor: pointer; border: none; border-radius: 4px; background: #3498db; color: white; font-weight: bold; font-size: 16px; touch-action: manipulation; }
+    button:disabled { background: #ccc; cursor: default; }
+    #btn-spin { min-width: 160px; }
+    .preset-section { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    select { min-height: 44px; font-size: 16px; padding: 0 8px; }
+
+    .menu-bar { display: flex; gap: 8px; justify-content: center; margin-bottom: 4px; }
+    .btn-menu { background: #2c3e50; }
+    dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px); border: none; border-radius: 10px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+    dialog::backdrop { background: rgba(0,0,0,0.45); }
+    .dlg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .dlg-head h3 { margin: 0; }
+    .btn-close { min-width: 44px; padding: 0; background: #95a5a6; }
+    .current-preset { margin: 0 0 8px; }
+    dialog .editor { border: none; padding: 0; width: 100%; }
+    dialog .preset-manage { margin-top: 0; width: 100%; }
+
+    .preset-manage { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; margin-top: 10px; width: min(420px, 100%); }
+    .preset-manage input { flex: 1 1 140px; min-width: 0; min-height: 44px; font-size: 16px; padding: 0 8px; }
+    .preset-manage .btn-del { background: #e74c3c; }
+    .preset-manage .btn-del:disabled { background: #ccc; }
+    .preset-manage .hint { flex-basis: 100%; margin: 0; text-align: center; min-height: 1em; }
+
+    /* 항목 편집 */
+    .editor { width: min(420px, 100%); border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 0; }
+    .editor legend { font-weight: bold; padding: 0 6px; }
+    .item-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+    .item-row input[type="text"] { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; padding: 0 8px; }
+    .item-row input[type="number"] { width: 64px; min-height: 44px; font-size: 16px; padding: 0 6px; }
+    .item-row input[type="color"] { width: 44px; height: 44px; padding: 2px; border: 1px solid #ccc; border-radius: 4px; background: none; flex: none; }
+    .item-row .btn-del { min-width: 44px; padding: 0; background: #e74c3c; flex: none; }
+    .item-row .btn-del:disabled { background: #ccc; }
+    .editor-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .hint { font-size: 13px; color: #666; margin: 8px 0 0; }
+    .col-head { display: flex; gap: 6px; font-size: 12px; color: #666; margin-bottom: 4px; }
+    .col-head span:nth-child(1) { width: 44px; }
+    .col-head span:nth-child(2) { flex: 1; }
+    .col-head span:nth-child(3) { width: 64px; }
+    .col-head span:nth-child(4) { width: 44px; }
+  </style>
+</head>
+<body>
+
+  <h2>🎲 의사결정 룰렛</h2>
+
+  <div class="menu-bar">
+    <button id="btn-open-preset" class="btn-menu">프리셋 편집</button>
+    <button id="btn-open-items" class="btn-menu">항목 편집</button>
+  </div>
+
+  <div class="preset-section">
+    <label for="preset-select">프리셋 선택: </label>
+    <select id="preset-select">
+      <option value="lunch">점심 메뉴 모음</option>
+      <option value="rps">가위바위보 대신</option>
+    </select>
+  </div>
+
+  <div class="roulette-container" id="roulette-container">
+    <div class="arrow"></div>
+    <canvas id="roulette" width="350" height="350"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="btn-spin">돌리기!</button>
+  </div>
+
+  <!-- 프리셋 편집 -->
+  <dialog id="dlg-preset">
+    <div class="dlg-head">
+      <h3>프리셋 편집</h3>
+      <button class="btn-close" data-close aria-label="닫기">✕</button>
+    </div>
+    <p class="current-preset">선택된 프리셋: <strong id="preset-current"></strong></p>
+    <div class="preset-manage">
+      <input type="text" id="preset-name" maxlength="20" placeholder="새 프리셋 이름" aria-label="새 프리셋 이름">
+      <button id="btn-preset-add">새 프리셋 추가</button>
+      <button id="btn-preset-delete" class="btn-del">선택 프리셋 삭제</button>
+      <p id="preset-msg" class="hint" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+
+  <!-- 항목 편집 -->
+  <dialog id="dlg-items">
+    <div class="dlg-head">
+      <h3 id="items-title">항목 편집</h3>
+      <button class="btn-close" data-close aria-label="닫기">✕</button>
+    </div>
+    <fieldset class="editor" id="editor">
+      <div class="col-head"><span>색상</span><span>이름</span><span>가중치</span><span></span></div>
+      <div id="item-list"></div>
+      <div class="editor-footer">
+        <button id="btn-add">+ 항목 추가</button>
+      </div>
+      <p class="hint">항목은 2~12개, 가중치는 1~10 (클수록 당첨 확률이 높음)</p>
+    </fieldset>
+  </dialog>
+
+  <script>
+    const canvas = document.getElementById('roulette');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('roulette-container');
+    const btnSpin = document.getElementById('btn-spin');
+    const btnAdd = document.getElementById('btn-add');
+    const presetSelect = document.getElementById('preset-select');
+    const editor = document.getElementById('editor');
+    const dlgPreset = document.getElementById('dlg-preset');
+    const dlgItems = document.getElementById('dlg-items');
+    const btnOpenPreset = document.getElementById('btn-open-preset');
+    const btnOpenItems = document.getElementById('btn-open-items');
+    const presetCurrent = document.getElementById('preset-current');
+    const itemsTitle = document.getElementById('items-title');
+    const itemList = document.getElementById('item-list');
+    const btnPresetAdd = document.getElementById('btn-preset-add');
+    const btnPresetDelete = document.getElementById('btn-preset-delete');
+    const presetNameInput = document.getElementById('preset-name');
+    const presetMsg = document.getElementById('preset-msg');
+
+    const MIN_ITEMS = 2;
+    const MAX_ITEMS = 12;
+    const MIN_WEIGHT = 1;
+    const MAX_WEIGHT = 10;
+    const PALETTE = ["#FF6B6B", "#4ECDC4", "#FFE66D", "#1A535C", "#FF9F1C", "#2EC4B6", "#E71D36", "#6A4C93", "#1982C4", "#8AC926", "#F15BB5", "#9B5DE5"];
+
+    const presets = {
+      lunch: [
+        { name: "짜장면", weight: 1, color: "#FF6B6B" },
+        { name: "국밥", weight: 2, color: "#4ECDC4" },
+        { name: "치킨", weight: 1, color: "#FFE66D" },
+        { name: "초밥", weight: 1, color: "#1A535C" }
+      ],
+      rps: [
+        { name: "가위", weight: 1, color: "#FF9F1C" },
+        { name: "바위", weight: 1, color: "#2EC4B6" },
+        { name: "보", weight: 1, color: "#E71D36" }
+      ]
+    };
+
+    // ---- 사용자 프리셋 (localStorage 저장) ----
+    const STORAGE_KEY = 'roulette.customPresets';
+    const MAX_CUSTOM_PRESETS = 20;
+
+    function sanitizeItems(items) {
+      if (!Array.isArray(items)) return null;
+      const clean = items.slice(0, MAX_ITEMS).map((it, i) => ({
+        name: String(it && it.name || `항목-${i + 1}`).slice(0, 20),
+        weight: clampWeight(it && it.weight),
+        color: /^#[0-9a-f]{6}$/i.test(it && it.color) ? it.color : PALETTE[i % PALETTE.length]
+      }));
+      return clean.length >= MIN_ITEMS ? clean : null;
+    }
+
+    function loadCustomPresets() {
+      const result = {};
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        Object.keys(saved).forEach(key => {
+          const items = sanitizeItems(saved[key] && saved[key].items);
+          if (items && saved[key].label) result[key] = { label: String(saved[key].label).slice(0, 20), items };
+        });
+      } catch (e) { /* 저장소를 쓸 수 없으면 이번 세션에서만 유지 */ }
+      return result;
+    }
+
+    function saveCustomPresets() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(customPresets)); } catch (e) { /* 무시 */ }
+    }
+
+    const customPresets = loadCustomPresets();
+    const isCustom = key => Object.prototype.hasOwnProperty.call(customPresets, key);
+
+    // 프리셋 원본이 편집으로 바뀌지 않도록 복사본 사용
+    function clonePreset(key) {
+      const source = isCustom(key) ? customPresets[key].items : presets[key];
+      return source.map(item => ({ ...item }));
+    }
+
+    let currentKey = 'lunch';
+    let currentItems = clonePreset(currentKey);
+    let currentRotation = 0;
+    let isSpinning = false;
+
+    // 항목이 바뀌면 다시 그리고, 사용자 프리셋이면 변경 내용을 저장
+    function onItemsChanged() {
+      draw(currentRotation);
+      if (isCustom(currentKey)) {
+        customPresets[currentKey].items = currentItems.map(item => ({ ...item }));
+        saveCustomPresets();
+      }
+    }
+
+    function rebuildPresetOptions() {
+      presetSelect.querySelectorAll('option[data-custom]').forEach(o => o.remove());
+      Object.keys(customPresets).forEach(key => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `⭐ ${customPresets[key].label}`;
+        opt.dataset.custom = '1';
+        presetSelect.appendChild(opt);
+      });
+      presetSelect.value = currentKey;
+    }
+
+    function updatePresetUI() {
+      btnPresetDelete.disabled = isSpinning || !isCustom(currentKey);
+      btnPresetAdd.disabled = isSpinning;
+      presetNameInput.disabled = isSpinning;
+      btnOpenPreset.disabled = isSpinning;
+      btnOpenItems.disabled = isSpinning;
+      const opt = presetSelect.options[presetSelect.selectedIndex];
+      presetCurrent.textContent = opt ? opt.textContent : '';
+      const name = opt ? opt.textContent.replace(/^⭐ /, '') : '';
+      itemsTitle.textContent = name ? `${name} 항목 편집` : '항목 편집';
+    }
+
+    function setPresetMessage(text) {
+      presetMsg.textContent = text;
+    }
+
+    function selectPreset(key) {
+      currentKey = key;
+      currentItems = clonePreset(key);
+      currentRotation = 0;
+      presetSelect.value = key;
+      renderEditor();
+      draw(0);
+      updatePresetUI();
+    }
+
+    function allPresetLabels() {
+      const builtin = Array.from(presetSelect.options).filter(o => !o.dataset.custom).map(o => o.textContent);
+      return builtin.concat(Object.keys(customPresets).map(k => customPresets[k].label));
+    }
+
+    // 캔버스를 컨테이너 폭과 화면 배율(DPR)에 맞춤. 그리기는 CSS 픽셀 단위로 수행
+    let size = 350;
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      size = Math.max(200, Math.round(container.clientWidth));
+      canvas.width = Math.round(size * dpr);
+      canvas.height = Math.round(size * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw(currentRotation);
+    }
+
+    function fitText(text, maxWidth) {
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let t = text;
+      while (t.length > 1 && ctx.measureText(t + "…").width > maxWidth) t = t.slice(0, -1);
+      return t + "…";
+    }
+
+    function draw(rotation = 0) {
+      const centerX = size / 2;
+      const centerY = size / 2;
+      const radius = size / 2;
+
+      ctx.clearRect(0, 0, size, size);
+
+      const totalWeight = currentItems.reduce((sum, item) => sum + item.weight, 0);
+      let startAngle = rotation;
+
+      currentItems.forEach(item => {
+        const sliceAngle = (item.weight / totalWeight) * (2 * Math.PI);
+        const endAngle = startAngle + sliceAngle;
+
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+        ctx.closePath();
+        ctx.fillStyle = item.color;
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 텍스트 그리기
+        const fontSize = Math.max(11, Math.round(size * 15 / 350));
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(startAngle + sliceAngle / 2);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.fillText(fitText(item.name, radius * 0.7), radius - 20, fontSize / 3);
+        ctx.restore();
+
+        startAngle = endAngle;
+      });
+    }
+
+    btnSpin.addEventListener('click', () => {
+      if (isSpinning) return;
+      isSpinning = true;
+      btnSpin.disabled = true;
+      editor.disabled = true;
+      presetSelect.disabled = true;
+      updatePresetUI();
+
+      let speed = Math.random() * 0.2 + 0.3;
+      const friction = 0.985;
+
+      function animate() {
+        speed *= friction;
+        currentRotation += speed;
+        draw(currentRotation);
+
+        if (speed > 0.001) {
+          requestAnimationFrame(animate);
+        } else {
+          isSpinning = false;
+          btnSpin.disabled = false;
+          editor.disabled = false;
+          presetSelect.disabled = false;
+          updatePresetUI();
+          checkWinner(currentRotation);
+        }
+      }
+      requestAnimationFrame(animate);
+    });
+
+    function checkWinner(rotation) {
+      const totalWeight = currentItems.reduce((sum, item) => sum + item.weight, 0);
+      let normalizedAngle = (1.5 * Math.PI - (rotation % (2 * Math.PI))) % (2 * Math.PI);
+      if (normalizedAngle < 0) normalizedAngle += 2 * Math.PI;
+
+      let currentAngle = 0;
+      for (const item of currentItems) {
+        const sliceAngle = (item.weight / totalWeight) * (2 * Math.PI);
+        if (normalizedAngle >= currentAngle && normalizedAngle < currentAngle + sliceAngle) {
+          alert(`🎉 당첨: [${item.name}]`);
+          break;
+        }
+        currentAngle += sliceAngle;
+      }
+    }
+
+    // ---- 항목 편집 ----
+    function clampWeight(value) {
+      const n = Math.round(Number(value));
+      if (!Number.isFinite(n)) return MIN_WEIGHT;
+      return Math.min(MAX_WEIGHT, Math.max(MIN_WEIGHT, n));
+    }
+
+    function renderEditor() {
+      itemList.innerHTML = "";
+      currentItems.forEach((item, i) => {
+        const row = document.createElement('div');
+        row.className = 'item-row';
+
+        const color = document.createElement('input');
+        color.type = 'color';
+        color.value = item.color;
+        color.setAttribute('aria-label', `${i + 1}번 항목 색상`);
+        color.addEventListener('input', () => { item.color = color.value; onItemsChanged(); });
+
+        const name = document.createElement('input');
+        name.type = 'text';
+        name.value = item.name;
+        name.maxLength = 20;
+        name.setAttribute('aria-label', `${i + 1}번 항목 이름`);
+        name.addEventListener('input', () => { item.name = name.value.trim() || `항목-${i + 1}`; onItemsChanged(); });
+
+        const weight = document.createElement('input');
+        weight.type = 'number';
+        weight.min = MIN_WEIGHT;
+        weight.max = MAX_WEIGHT;
+        weight.step = 1;
+        weight.inputMode = 'numeric';
+        weight.value = item.weight;
+        weight.setAttribute('aria-label', `${i + 1}번 항목 가중치`);
+        weight.addEventListener('input', () => {
+          if (weight.value === "") return;
+          item.weight = clampWeight(weight.value);
+          onItemsChanged();
+        });
+        weight.addEventListener('change', () => {
+          item.weight = clampWeight(weight.value);
+          weight.value = item.weight;
+          onItemsChanged();
+        });
+
+        const del = document.createElement('button');
+        del.className = 'btn-del';
+        del.textContent = '✕';
+        del.setAttribute('aria-label', `${i + 1}번 항목 삭제`);
+        del.disabled = currentItems.length <= MIN_ITEMS;
+        del.addEventListener('click', () => {
+          if (currentItems.length <= MIN_ITEMS) return;
+          currentItems.splice(i, 1);
+          renderEditor();
+          onItemsChanged();
+        });
+
+        row.append(color, name, weight, del);
+        itemList.appendChild(row);
+      });
+      btnAdd.disabled = currentItems.length >= MAX_ITEMS;
+    }
+
+    btnAdd.addEventListener('click', () => {
+      if (currentItems.length >= MAX_ITEMS) return;
+      const n = currentItems.length;
+      currentItems.push({ name: `항목-${n + 1}`, weight: 1, color: PALETTE[n % PALETTE.length] });
+      renderEditor();
+      onItemsChanged();
+    });
+
+    presetSelect.addEventListener('change', (e) => {
+      setPresetMessage('');
+      selectPreset(e.target.value);
+    });
+
+    // 현재 룰렛(편집 내용 포함)을 새 프리셋으로 저장
+    function addPreset() {
+      const label = presetNameInput.value.trim();
+      if (!label) {
+        setPresetMessage('프리셋 이름을 입력하세요.');
+        presetNameInput.focus();
+        return;
+      }
+      if (Object.keys(customPresets).length >= MAX_CUSTOM_PRESETS) {
+        setPresetMessage(`프리셋은 최대 ${MAX_CUSTOM_PRESETS}개까지 저장할 수 있습니다.`);
+        return;
+      }
+      if (allPresetLabels().some(l => l.replace(/^⭐ /, '') === label)) {
+        setPresetMessage('같은 이름의 프리셋이 이미 있습니다.');
+        presetNameInput.focus();
+        return;
+      }
+      const key = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      // 기존 항목 이름을 가져오지 않고 항목-1, 항목-2, 항목-3 으로 시작
+      const items = [1, 2, 3].map(n => ({ name: `항목-${n}`, weight: 1, color: PALETTE[(n - 1) % PALETTE.length] }));
+      customPresets[key] = { label, items };
+      saveCustomPresets();
+      rebuildPresetOptions();
+      selectPreset(key);
+      presetNameInput.value = '';
+      setPresetMessage(`"${label}" 프리셋을 추가했습니다. "항목 편집"에서 항목을 수정하세요.`);
+    }
+
+    function deletePreset() {
+      if (isSpinning || !isCustom(currentKey)) return;
+      const label = customPresets[currentKey].label;
+      if (!confirm(`"${label}" 프리셋을 삭제할까요?`)) return;
+      delete customPresets[currentKey];
+      saveCustomPresets();
+      rebuildPresetOptions();
+      selectPreset('lunch');
+      setPresetMessage(`"${label}" 프리셋을 삭제했습니다.`);
+    }
+
+    btnPresetAdd.addEventListener('click', addPreset);
+    btnPresetDelete.addEventListener('click', deletePreset);
+    presetNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addPreset(); });
+
+    // 편집 메뉴 (모달)
+    btnOpenPreset.addEventListener('click', () => {
+      if (isSpinning) return;
+      setPresetMessage('');
+      updatePresetUI();
+      dlgPreset.showModal();
+    });
+    btnOpenItems.addEventListener('click', () => {
+      if (isSpinning) return;
+      dlgItems.showModal();
+    });
+    [dlgPreset, dlgItems].forEach(dlg => {
+      dlg.addEventListener('click', (e) => {
+        // 닫기 버튼 또는 배경(백드롭) 클릭 시 닫기
+        if (e.target === dlg || e.target.closest('[data-close]')) dlg.close();
+      });
+    });
+
+    window.addEventListener('resize', resizeCanvas);
+
+    // 초기 렌더링
+    rebuildPresetOptions();
+    renderEditor();
+    resizeCanvas();
+    updatePresetUI();
+  </script>
+</body>
+</html>
